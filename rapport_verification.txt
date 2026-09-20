@@ -1,0 +1,5 @@
+Points à vérifier dans l'arbre
+==============================
+- Timéo2 Pedoussaut : le nom contient un chiffre.
+- Zelie Dacher : le champ « deathPlace » contient « 1970 » : c'est probablement une année saisie dans le mauvais champ.
+- Yves Maurice Clavaud de Luçon : le champ « deathPlace » ressemble à une adresse (« 2/4rue du Parc Chevirons »).

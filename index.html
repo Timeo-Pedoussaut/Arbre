@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arbre généalogique</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <h1 id="site-title">L'arbre généalogique</h1>
+    <p class="masthead-sub">Cliquez sur une personne pour ouvrir sa fiche complète</p>
+  </div>
+  <div class="search-wrap">
+    <input type="search" id="search" placeholder="Rechercher un nom…" autocomplete="off" aria-label="Rechercher une personne">
+    <div id="search-results" class="search-results"></div>
+  </div>
+</header>
+
+<div class="toolbar" role="toolbar" aria-label="Affichage de l'arbre">
+  <label class="tb-view">
+    <span>Vue</span>
+    <select id="view-select"></select>
+  </label>
+
+  <div class="tb-zoom" role="group" aria-label="Zoom">
+    <button type="button" id="zoom-out" class="icon-btn" aria-label="Réduire">−</button>
+    <output id="zoom-level" aria-live="off">100 %</output>
+    <button type="button" id="zoom-in" class="icon-btn" aria-label="Agrandir">+</button>
+    <button type="button" id="zoom-fit" class="btn">Tout voir</button>
+  </div>
+
+  <div class="tb-actions">
+    <button type="button" id="btn-add" class="btn btn-primary">Ajouter une personne</button>
+    <button type="button" id="btn-print" class="btn">Exporter en PDF</button>
+  </div>
+</div>
+
+<div id="draft-banner" class="banner" hidden>
+  <p id="draft-text"></p>
+  <div class="banner-actions">
+    <button type="button" id="btn-publish" class="btn btn-primary">Publier mes modifications</button>
+    <button type="button" id="btn-discard" class="btn">Effacer le brouillon</button>
+  </div>
+</div>
+
+<div id="print-header" class="print-header" aria-hidden="true">
+  <strong id="print-title"></strong>
+  <span id="print-sub"></span>
+</div>
+
+<main id="viewport" class="viewport" tabindex="-1" aria-label="Arbre généalogique">
+  <div id="stage" class="stage">
+    <div id="canvas" class="canvas">
+      <svg id="lines" class="lines" aria-hidden="true"></svg>
+      <div id="cards"></div>
+    </div>
+  </div>
+</main>
+
+<aside id="panel" class="panel" aria-hidden="true" aria-label="Fiche de la personne">
+  <button id="panel-close" class="panel-close" aria-label="Fermer la fiche">×</button>
+  <div id="panel-content" class="panel-content"></div>
+</aside>
+<div id="panel-overlay" class="panel-overlay"></div>
+
+<footer class="foot">
+  <p><span id="person-count"></span> · généalogie en construction</p>
+</footer>
+
+<!-- ===== Fenêtre : ajouter / modifier une personne ===== -->
+<dialog id="dlg-person" class="dlg">
+  <form id="person-form" novalidate>
+    <h2 id="pf-title">Ajouter une personne</h2>
+
+    <fieldset id="pf-relation">
+      <legend>Lien avec l'arbre</legend>
+      <div class="radio-row">
+        <label><input type="radio" name="rel" value="child"> Enfant de…</label>
+        <label><input type="radio" name="rel" value="spouse"> Conjoint(e) de…</label>
+        <label><input type="radio" name="rel" value="parent"> Parent de…</label>
+        <label><input type="radio" name="rel" value="none"> Aucun lien pour l'instant</label>
+      </div>
+      <div id="pf-rel-fields" class="grid">
+        <label class="span2">Personne <select id="pf-rel-target"></select></label>
+        <label id="pf-fam-wrap" class="span2">Union concernée <select id="pf-rel-fam"></select></label>
+        <div id="pf-marr-wrap" class="span2 grid">
+          <label>Date du mariage <input id="pf-marr-date" type="text" placeholder="ex. 12 mai 1925 ou 1925"></label>
+          <label>Lieu du mariage <input id="pf-marr-place" type="text"></label>
+          <label class="check span2"><input id="pf-married" type="checkbox" checked> Ils sont mariés (sinon : union libre / partenaires)</label>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Identité</legend>
+      <div class="grid">
+        <label>Prénom(s) <input id="pf-given" type="text" autocomplete="off"></label>
+        <label>Nom de naissance <input id="pf-surname" type="text" autocomplete="off"></label>
+        <label>Nom d'épouse / d'usage <input id="pf-married-name" type="text" autocomplete="off"></label>
+        <label>Sexe
+          <select id="pf-sex">
+            <option value="">Non précisé</option>
+            <option value="H">Homme</option>
+            <option value="F">Femme</option>
+          </select>
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Naissance et décès</legend>
+      <div class="grid">
+        <label>Date de naissance <input id="pf-birth" type="text" placeholder="ex. 12 mars 1900 ou 1900"></label>
+        <label>Lieu de naissance <input id="pf-birthplace" type="text"></label>
+        <label class="check span2"><input id="pf-dead" type="checkbox"> Cette personne est décédée</label>
+        <label class="dead-only">Date de décès <input id="pf-death" type="text" placeholder="laisser vide si inconnue"></label>
+        <label class="dead-only">Lieu de décès <input id="pf-deathplace" type="text"></label>
+        <label class="dead-only span2">Cause du décès <input id="pf-deathcause" type="text"></label>
+      </div>
+      <p id="pf-living-note" class="muted small living-note" hidden>Personne vivante : seule l'année de naissance est conservée (le jour, le mois et le lieu ne sont pas publiés). Réglage <code>hideLiving</code> dans data.js.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Vie</legend>
+      <div class="grid">
+        <label class="span2">Métier(s) <input id="pf-job" type="text"></label>
+        <label class="span2">Anecdote <textarea id="pf-anecdote" rows="4"></textarea></label>
+        <div class="span2 photo-field">
+          <div id="pf-photo-preview" class="photo-preview" aria-hidden="true"></div>
+          <label>Photo principale <input id="pf-photo" type="file" accept="image/*"></label>
+        </div>
+      </div>
+    </fieldset>
+
+    <p id="pf-error" class="form-error" role="alert" hidden></p>
+
+    <div class="dlg-actions">
+      <button type="button" id="pf-delete" class="btn btn-danger" hidden>Supprimer</button>
+      <span class="spacer"></span>
+      <button type="button" id="pf-cancel" class="btn">Annuler</button>
+      <button type="submit" class="btn btn-primary">Enregistrer</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ===== Fenêtre : export PDF ===== -->
+<dialog id="dlg-print" class="dlg dlg-narrow">
+  <form method="dialog" id="print-form">
+    <h2>Exporter en PDF</h2>
+    <p id="print-what" class="muted"></p>
+    <div class="grid">
+      <label>Format
+        <select id="print-paper">
+          <option value="A4">A4</option>
+          <option value="A3" selected>A3</option>
+        </select>
+      </label>
+      <label>Orientation
+        <select id="print-orient">
+          <option value="auto" selected>Automatique</option>
+          <option value="landscape">Paysage</option>
+          <option value="portrait">Portrait</option>
+        </select>
+      </label>
+      <label class="check span2"><input id="print-title-on" type="checkbox" checked> Ajouter le titre et la date en haut de page</label>
+    </div>
+    <p id="print-warn" class="form-error" hidden></p>
+    <p class="muted small">Dans la fenêtre qui s'ouvre, choisissez « Enregistrer au format PDF » comme imprimante.</p>
+    <div class="dlg-actions">
+      <span class="spacer"></span>
+      <button type="button" id="print-cancel" class="btn">Annuler</button>
+      <button type="submit" class="btn btn-primary">Créer le PDF</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ===== Fenêtre : publier les modifications ===== -->
+<dialog id="dlg-export" class="dlg dlg-narrow">
+  <h2>Publier mes modifications</h2>
+  <p>Les changements faits ici ne sont visibles que dans ce navigateur. Pour les mettre en ligne :</p>
+  <ol class="steps">
+    <li>Télécharge le fichier à jour (<strong>data.js</strong>, ou un <strong>.zip</strong> s'il y a de nouvelles photos).</li>
+    <li>Sur GitHub, ouvre ton dépôt, puis <em>Add file → Upload files</em> et dépose <strong>data.js</strong> (et le dossier <strong>photos</strong> si tu as choisi le zip, après l'avoir dézippé).</li>
+    <li>Clique sur <em>Commit changes</em>. Le site se met à jour en une minute environ.</li>
+  </ol>
+  <p id="export-note" class="muted small"></p>
+  <div class="dlg-actions wrap">
+    <button type="button" id="export-js" class="btn btn-primary">Télécharger data.js</button>
+    <button type="button" id="export-zip" class="btn">Télécharger data.js + photos (.zip)</button>
+    <span class="spacer"></span>
+    <button type="button" id="export-close" class="btn">Fermer</button>
+  </div>
+</dialog>
+
+<!-- ===== Visionneuse de photo ===== -->
+<dialog id="lightbox" class="lightbox">
+  <button type="button" id="lightbox-close" class="panel-close" aria-label="Fermer la photo">×</button>
+  <img id="lightbox-img" alt="">
+</dialog>
+
+<script src="data.js"></script>
+<script src="tree-layout.js"></script>
+<script src="script.js"></script>
+<script src="editor.js"></script>
+</body>
+</html>
