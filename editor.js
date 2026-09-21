@@ -59,6 +59,46 @@
   }
 
   // ==========================================================
+  // Dates précises : qualificatif + jour + mois + année (ou texte libre si la date n'est pas reconnue)
+  // ==========================================================
+  function makeDateField(host, onChange) {
+    host.textContent = "";
+    const mk = (tag, cls) => { const e = document.createElement(tag); e.className = cls; return e; };
+    const q = mk("select", "df-q"); q.setAttribute("aria-label", "Précision");
+    [["", "exacte"], ["vers", "vers"], ["avant", "avant"], ["après", "après"]].forEach((o) => q.appendChild(new Option(o[1], o[0])));
+    const d = mk("input", "df-d"); d.type = "number"; d.min = 1; d.max = 31; d.placeholder = "Jour"; d.setAttribute("aria-label", "Jour");
+    const m = mk("select", "df-m"); m.setAttribute("aria-label", "Mois");
+    m.appendChild(new Option("Mois", ""));
+    App.MONTHS.forEach((n, i) => m.appendChild(new Option(n, String(i + 1))));
+    const y = mk("input", "df-y"); y.type = "number"; y.min = 1000; y.max = 2100; y.placeholder = "Année"; y.setAttribute("aria-label", "Année");
+    const raw = mk("input", "df-raw"); raw.type = "text"; raw.hidden = true; raw.setAttribute("aria-label", "Date (texte libre)");
+    [q, d, m, y, raw].forEach((c) => { host.appendChild(c); c.addEventListener("input", () => onChange && onChange()); c.addEventListener("change", () => onChange && onChange()); });
+    const structured = [q, d, m, y];
+    return {
+      set(text) {
+        q.value = ""; d.value = ""; m.value = ""; y.value = ""; raw.value = "";
+        raw.hidden = true; structured.forEach((c) => { c.hidden = false; });
+        if (!text) return;
+        const p = App.parseDate(text);
+        if (p) { q.value = p.q; d.value = p.d || ""; m.value = p.m || ""; y.value = p.y; }
+        else { raw.value = text; raw.hidden = false; structured.forEach((c) => { c.hidden = true; }); }
+      },
+      year() { return raw.hidden ? (y.value ? +y.value : null) : App.yearOf(raw.value); },
+      get() {
+        if (!raw.hidden) return { text: raw.value.trim(), error: "" };
+        if (!y.value && !d.value && !m.value) return { text: "", error: "" };
+        if (!y.value) return { text: "", error: "Indiquez l'année dès qu'un jour ou un mois est saisi." };
+        const yy = +y.value, dd = +d.value, mm = +m.value;
+        if (dd && !mm) return { text: "", error: "Indiquez aussi le mois de la date." };
+        if (dd) { const t = new Date(yy, mm - 1, dd); if (t.getMonth() !== mm - 1 || t.getDate() !== dd) return { text: "", error: "Ce jour n'existe pas dans ce mois." }; }
+        return { text: App.formatDate({ q: q.value, d: dd, m: mm, y: yy }), error: "" };
+      },
+    };
+  }
+
+  const DF = {};
+
+  // ==========================================================
   // Photo : redimensionnée dans le navigateur (max. 720 px) avant d'être gardée
   // ==========================================================
   function resizeImage(file, max) {
@@ -156,17 +196,17 @@
   }
 
   function updateLivingNote() {
-    const y = App.yearOf($("pf-birth").value);
-    const living = CFG.hideLiving && !$("pf-dead").checked && !$("pf-death").value.trim() && y != null && new Date().getFullYear() - y < 105;
+    const y = DF.birth.year();
+    const living = CFG.hideLiving && !$("pf-dead").checked && !DF.death.get().text && y != null && new Date().getFullYear() - y < 105;
     $("pf-living-note").hidden = !living;
   }
 
   form.querySelectorAll('input[name="rel"]').forEach((r) => r.addEventListener("change", updateRelUI));
   $("pf-rel-target").addEventListener("change", () => { if (relType() === "child") fillFamilies(App.getState()); });
   $("pf-dead").addEventListener("change", updateDeadUI);
-  $("pf-death").addEventListener("input", updateLivingNote);
-  $("pf-birth").addEventListener("input", updateLivingNote);
-  $("pf-marr-date").addEventListener("input", () => { if ($("pf-marr-date").value.trim()) $("pf-married").checked = true; });
+  DF.birth = makeDateField($("pf-birth"), updateLivingNote);
+  DF.death = makeDateField($("pf-death"), updateLivingNote);
+  DF.marr = makeDateField($("pf-marr-date"), () => { if (DF.marr.get().text) $("pf-married").checked = true; });
 
   // ==========================================================
   // Formulaire : ouverture
@@ -190,10 +230,10 @@
     $("pf-surname").value = p.surname || "";
     $("pf-married-name").value = p.marriedName || "";
     $("pf-sex").value = p.sex || "";
-    $("pf-birth").value = p.birth || "";
+    DF.birth.set(p.birth || "");
     $("pf-birthplace").value = p.birthPlace || "";
     $("pf-dead").checked = !!(p.dead || p.death);
-    $("pf-death").value = p.death || "";
+    DF.death.set(p.death || "");
     $("pf-deathplace").value = p.deathPlace || "";
     $("pf-deathcause").value = p.deathCause || "";
     $("pf-job").value = p.job || "";
@@ -205,7 +245,7 @@
       const rel = opts.relation || { type: "none" };
       form.querySelector('input[name="rel"][value="' + rel.type + '"]').checked = true;
       if (rel.target) $("pf-rel-target").value = rel.target;
-      $("pf-marr-date").value = ""; $("pf-marr-place").value = ""; $("pf-married").checked = true;
+      DF.marr.set(""); $("pf-marr-place").value = ""; $("pf-married").checked = true;
       updateRelUI();
     }
     updateDeadUI();
@@ -220,12 +260,15 @@
   // ==========================================================
   function readFields() {
     const v = (id) => $(id).value.trim();
-    const dead = $("pf-dead").checked || !!v("pf-death");
+    const bd = DF.birth.get(), dd = DF.death.get();
+    const err = bd.error ? "Naissance : " + bd.error : dd.error ? "Décès : " + dd.error : "";
+    const dead = $("pf-dead").checked || !!dd.text;
     const f = {
+      _error: err,
       given: v("pf-given"), surname: v("pf-surname"), marriedName: v("pf-married-name"), sex: $("pf-sex").value,
-      birth: v("pf-birth"), birthPlace: v("pf-birthplace"),
+      birth: bd.text, birthPlace: v("pf-birthplace"),
       dead: dead || undefined,
-      death: dead ? v("pf-death") : "", deathPlace: dead ? v("pf-deathplace") : "", deathCause: dead ? v("pf-deathcause") : "",
+      death: dead ? dd.text : "", deathPlace: dead ? v("pf-deathplace") : "", deathCause: dead ? v("pf-deathcause") : "",
       job: v("pf-job"), anecdote: $("pf-anecdote").value.trim(),
     };
     // personne vivante : on ne garde que l'année de naissance
@@ -275,8 +318,10 @@
     }
 
     if (type === "spouse") {
-      const married = $("pf-married").checked || $("pf-marr-date").value.trim() || $("pf-marr-place").value.trim();
-      const md = $("pf-marr-date").value.trim(), mp = $("pf-marr-place").value.trim();
+      const mdr = DF.marr.get();
+      if (mdr.error) return "Mariage : " + mdr.error;
+      const md = mdr.text, mp = $("pf-marr-place").value.trim();
+      const married = $("pf-married").checked || md || mp;
       // une union existante où il manque un conjoint est complétée plutôt que dupliquée
       const open = (ix.famsOf[tid] || []).find((f) => !(f.husb && f.wife));
       let fam = open;
@@ -317,6 +362,7 @@
     e.preventDefault();
     const st = App.getState();
     const f = readFields();
+    if (f._error) { showError(f._error); return; }
     if (!f.given && !f.surname) { showError("Renseignez au moins un prénom ou un nom."); return; }
 
     let id;

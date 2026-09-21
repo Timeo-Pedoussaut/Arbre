@@ -1,11 +1,15 @@
 /*
-  Calcul de la mise en page de l'arbre (aucun accès au DOM : ce fichier ne fait que des calculs).
+  Mise en page de l'arbre (calculs seulement, aucun accès au DOM).
 
-  Principe : on part d'une personne, on affiche sa ou ses unions sur une même rangée
-  (conjoint 1 · la personne · conjoint 2), puis les enfants de chaque union en dessous,
-  chacun avec sa propre rangée d'union, et ainsi de suite.
-  Chaque famille n'est déroulée qu'une seule fois : si elle apparaît une 2e fois dans la
-  vue, on affiche à la place un petit lien « Voir sa descendance ».
+  Tout l'arbre tient dans UN seul graphe : chaque personne est placée sur la ligne de sa
+  génération, les couples restent côte à côte, et les ancêtres d'un conjoint (ex. les parents
+  d'un époux qui « vient d'ailleurs ») apparaissent au-dessus de lui, à la même hauteur que
+  les parents de son conjoint. Ça permet de raccorder d'autres branches (par exemple celle
+  de la mère) sans jamais séparer les arbres.
+
+  Étapes : 1. regrouper les couples en « blocs »  2. donner une génération à chaque bloc
+           3. ordonner les blocs sur chaque ligne  4. affiner les positions horizontales
+           (chaque parent est centré au-dessus de ses enfants, sans chevauchement).
 */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -14,15 +18,13 @@
   "use strict";
 
   const DEFAULTS = {
-    cardW: 208,      // largeur d'une carte
-    cardH: 84,       // hauteur d'une carte
-    linkW: 24,       // espace entre deux conjoints
-    hGap: 22,        // espace horizontal entre deux frères et sœurs
-    groupGap: 44,    // espace entre les enfants de deux unions différentes
-    vGap: 68,        // espace vertical entre deux générations
-    busStep: 9,      // décalage des traits quand une personne a deux unions avec enfants
-    rootGap: 90,     // espace entre deux arbres empilés
-    margin: 36,
+    cardW: 232, cardH: 104, linkW: 24,
+    hGap: 34,       // espace horizontal minimal entre deux blocs d'une même ligne
+    vGap: 72,       // espace vertical entre deux générations
+    busStep: 9,     // décalage des traits quand un bloc a plusieurs unions avec enfants
+    margin: 40,
+    iterations: 40,
+    marriageText: null, // (famille) => texte à afficher près de l'union, ou ""
   };
 
   function yearOf(s) {
@@ -34,23 +36,23 @@
   function buildIndex(state) {
     const people = state.people || {};
     const families = state.families || [];
-    const famsOf = {};   // personne -> familles où elle est conjointe
-    const parentFam = {}; // personne -> famille dont elle est enfant
+    const famsOf = {}, parentFam = {};
     families.forEach((f) => {
       [f.husb, f.wife].forEach((pid) => {
         if (pid && people[pid]) (famsOf[pid] = famsOf[pid] || []).push(f);
       });
-      (f.children || []).forEach((c) => {
-        if (people[c] && !parentFam[c]) parentFam[c] = f;
-      });
+      (f.children || []).forEach((c) => { if (people[c] && !parentFam[c]) parentFam[c] = f; });
     });
     return { people, families, famsOf, parentFam, order: Object.keys(people) };
   }
 
-  function birthYear(idx, pid) {
-    const p = idx.people[pid];
-    return p ? yearOf(p.birth) : null;
+  function stableSort(list, keyFn) {
+    return list.map((v, i) => ({ v, i, k: keyFn(v) }))
+      .sort((a, b) => (a.k !== b.k ? (a.k < b.k ? -1 : 1) : a.i - b.i))
+      .map((x) => x.v);
   }
+
+  function birthYear(idx, pid) { const p = idx.people[pid]; return p ? yearOf(p.birth) : null; }
 
   function famKey(idx, f) {
     const ys = [];
@@ -60,16 +62,7 @@
     return ys.length ? Math.min.apply(null, ys) : Infinity;
   }
 
-  function stableSort(list, keyFn) {
-    return list
-      .map((v, i) => ({ v, i, k: keyFn(v) }))
-      .sort((a, b) => (a.k !== b.k ? (a.k < b.k ? -1 : 1) : a.i - b.i))
-      .map((x) => x.v);
-  }
-
-  function sortedFams(idx, pid) {
-    return stableSort(idx.famsOf[pid] || [], (f) => famKey(idx, f));
-  }
+  function sortedFams(idx, pid) { return stableSort(idx.famsOf[pid] || [], (f) => famKey(idx, f)); }
 
   function sortedKids(idx, fam) {
     const kids = (fam.children || []).filter((c) => idx.people[c]);
@@ -91,178 +84,271 @@
     return n;
   }
 
-  // ------------------------------------------------------------------ une « unité » = une personne + ses unions + sa descendance
-  function layoutUnit(idx, pid, ctx, o, trail) {
-    trail = new Set(trail); trail.add(pid);
+  // ------------------------------------------------------------------ sous-ensembles (vues)
+  function descendantsSet(idx, pid) {
+    const set = new Set([pid]), seen = new Set();
+    (function down(id) {
+      if (seen.has(id)) return;
+      seen.add(id);
+      (idx.famsOf[id] || []).forEach((f) => {
+        [f.husb, f.wife].forEach((s) => { if (s && idx.people[s]) set.add(s); });
+        (f.children || []).forEach((c) => { if (idx.people[c]) { set.add(c); down(c); } });
+      });
+    })(pid);
+    return set;
+  }
 
-    const infos = sortedFams(idx, pid).map((f) => ({
-      fam: f,
-      spouse: (f.husb === pid ? f.wife : f.husb) || null,
-      link: null,        // indice de la carte de gauche du lien conjugal (le lien va de link à link+1)
-      anchorCard: null,  // à défaut de lien : carte sous laquelle partent les enfants
-      stub: false,
-      kids: [],
-    }));
-    infos.forEach((inf) => { if (inf.spouse && !idx.people[inf.spouse]) inf.spouse = null; });
+  function ancestorsSet(idx, pid) {
+    const set = new Set([pid]);
+    (function up(id) {
+      const f = idx.parentFam[id];
+      if (!f) return;
+      [f.husb, f.wife].forEach((p) => { if (p && idx.people[p] && !set.has(p)) { set.add(p); up(p); } });
+    })(pid);
+    return set;
+  }
 
-    // --- la rangée de cartes
-    const cards = [];
-    let focusIdx = 0;
-    if (infos.length <= 1) {
-      const inf = infos[0];
-      if (inf && inf.spouse) {
-        if (inf.fam.husb === pid) { cards.push(pid, inf.spouse); focusIdx = 0; }
-        else { cards.push(inf.spouse, pid); focusIdx = 1; }
-        inf.link = 0;
-      } else cards.push(pid);
-    } else {
-      if (infos[0].spouse) { cards.push(infos[0].spouse); infos[0].link = 0; }
-      focusIdx = cards.length;
-      cards.push(pid);
-      for (let k = 1; k < infos.length; k++) {
-        const sp = infos[k].spouse;
-        if (!sp) continue;
-        cards.push(sp);
-        if (k === 1) infos[k].link = focusIdx;
-        else infos[k].anchorCard = cards.length - 1;
+  // view = { mode: "all" | "desc" | "anc" | "hour", pid }
+  function viewSet(idx, view) {
+    if (!view || view.mode === "all" || !idx.people[view.pid]) return new Set(idx.order);
+    if (view.mode === "desc") return descendantsSet(idx, view.pid);
+    if (view.mode === "anc") return ancestorsSet(idx, view.pid);
+    const a = ancestorsSet(idx, view.pid);
+    descendantsSet(idx, view.pid).forEach((x) => a.add(x));
+    return a;
+  }
+
+  // ------------------------------------------------------------------ régression isotone (positions sans chevauchement)
+  // Cherche les positions x_i les plus proches des cibles t_i, dans l'ordre, séparées d'au moins gap.
+  function spread(blocks, targets, gap) {
+    const n = blocks.length;
+    if (!n) return;
+    const S = new Array(n);
+    let acc = 0;
+    for (let i = 0; i < n; i++) { S[i] = acc; acc += blocks[i].w + gap; }
+    const stack = [];
+    for (let i = 0; i < n; i++) {
+      stack.push({ sum: targets[i] - S[i], cnt: 1, from: i });
+      while (stack.length > 1) {
+        const b = stack[stack.length - 1], a = stack[stack.length - 2];
+        if (a.sum / a.cnt <= b.sum / b.cnt) break;
+        a.sum += b.sum; a.cnt += b.cnt; stack.pop();
       }
     }
-    infos.forEach((inf) => { if (inf.link === null && inf.anchorCard === null) inf.anchorCard = focusIdx; });
-    cards.forEach((id) => ctx.cardShown.add(id));
-    infos.forEach((inf) => ctx.famShown.add(inf.fam.id));
+    stack.forEach((s) => {
+      const m = s.sum / s.cnt;
+      for (let i = s.from; i < s.from + s.cnt; i++) blocks[i].x = m + S[i];
+    });
+  }
 
-    // --- les enfants
-    let cursor = 0;
-    const kidsAll = [];
-    infos.forEach((inf) => {
-      const kids = sortedKids(idx, inf.fam);
-      if (!kids.length) return;
-      if (ctx.expanded.has(inf.fam.id)) { inf.stub = true; return; }
-      ctx.expanded.add(inf.fam.id);
-      kids.filter((k) => !trail.has(k)).forEach((k, i) => {
-        const unit = layoutUnit(idx, k, ctx, o, trail);
-        if (kidsAll.length) cursor += i === 0 ? o.groupGap : o.hGap;
-        const kd = { unit, dx: cursor, pid: k };
-        cursor += unit.width;
-        kidsAll.push(kd);
-        inf.kids.push(kd);
+  // ------------------------------------------------------------------ mise en page d'un sous-ensemble
+  function layoutGraph(idx, set, opts) {
+    const o = Object.assign({}, DEFAULTS, opts);
+    const step = o.cardW + o.linkW;
+    const has = (id) => id && set.has(id) && idx.people[id];
+
+    // --- familles utiles
+    const fams = [];
+    const famInfo = {};
+    idx.families.forEach((f) => {
+      const partners = [f.husb, f.wife].filter(has);
+      const kids = (f.children || []).filter(has);
+      if (!partners.length) return;
+      if (partners.length === 1 && !kids.length) return;
+      const fi = { f, partners, kids: sortedKids(idx, { children: kids }) };
+      fams.push(fi); famInfo[f.id] = fi;
+    });
+
+    // --- blocs = personnes reliées par une union
+    const uf = {};
+    const find = (a) => { while (uf[a] !== a) { uf[a] = uf[uf[a]]; a = uf[a]; } return a; };
+    const members = idx.order.filter(has);
+    members.forEach((id) => { uf[id] = id; });
+    fams.forEach((fi) => { if (fi.partners.length === 2) uf[find(fi.partners[0])] = find(fi.partners[1]); });
+    const groups = new Map();
+    members.forEach((id) => { const r = find(id); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(id); });
+    const blocks = [];
+    const blockOf = {};
+    groups.forEach((ids) => {
+      const b = { i: blocks.length, ids, cards: [], fams: [], gen: 0, x: 0, w: 0 };
+      blocks.push(b);
+      ids.forEach((id) => { blockOf[id] = b; });
+    });
+    fams.forEach((fi) => { blockOf[fi.partners[0]].fams.push(fi); });
+
+    // --- ordre des cartes dans un bloc : conjoint 1 · personne · conjoint 2 …
+    blocks.forEach((b) => {
+      const ids = b.ids;
+      if (ids.length === 1) { b.cards = ids.slice(); b.hub = 0; return; }
+      const adj = {};
+      ids.forEach((id) => { adj[id] = []; });
+      b.fams.forEach((fi) => { if (fi.partners.length === 2) { adj[fi.partners[0]].push(fi.partners[1]); adj[fi.partners[1]].push(fi.partners[0]); } });
+      if (ids.length === 2) {
+        const fi = b.fams.find((x) => x.partners.length === 2);
+        b.cards = fi ? [fi.f.husb, fi.f.wife].filter((x) => ids.indexOf(x) >= 0) : ids.slice();
+        if (b.cards.length < 2) b.cards = ids.slice();
+        b.hub = 0; return;
+      }
+      let hub = ids[0];
+      ids.forEach((id) => { if (adj[id].length > adj[hub].length) hub = id; });
+      const star = adj[hub].length >= 2 && ids.every((id) => id === hub || adj[id].length === 1);
+      if (star) {
+        const sp = [];
+        sortedFams(idx, hub).forEach((f) => {
+          const other = f.husb === hub ? f.wife : f.husb;
+          if (other && adj[hub].indexOf(other) >= 0 && sp.indexOf(other) < 0) sp.push(other);
+        });
+        b.cards = [sp[0], hub].concat(sp.slice(1));
+      } else {
+        const start = ids.find((id) => adj[id].length === 1) || ids[0];
+        const seen = new Set(), walk = [];
+        (function go(id) { if (seen.has(id)) return; seen.add(id); walk.push(id); adj[id].forEach(go); })(start);
+        ids.forEach((id) => { if (!seen.has(id)) walk.push(id); });
+        b.cards = walk;
+      }
+      b.hub = b.cards.indexOf(hub);
+    });
+    blocks.forEach((b) => { b.w = b.cards.length * o.cardW + (b.cards.length - 1) * o.linkW; });
+
+    // --- ancrage des enfants sous l'union
+    blocks.forEach((b) => {
+      b.kidFams = b.fams.filter((fi) => fi.kids.length).map((fi) => {
+        const pos = fi.partners.map((id) => b.cards.indexOf(id));
+        if (fi.partners.length === 2 && Math.abs(pos[0] - pos[1]) === 1) {
+          fi.ax = Math.min(pos[0], pos[1]) * step + o.cardW + o.linkW / 2; fi.mid = true;
+        } else {
+          const far = pos.length === 2 ? (Math.abs(pos[0] - b.hub) >= Math.abs(pos[1] - b.hub) ? pos[0] : pos[1]) : pos[0];
+          fi.ax = far * step + o.cardW / 2; fi.mid = false;
+        }
+        return fi;
+      }).sort((a, c) => a.ax - c.ax);
+    });
+
+    // --- relations parent -> enfant entre blocs
+    const links = [];
+    blocks.forEach((b) => b.kidFams.forEach((fi) => fi.kids.forEach((k) => {
+      const cb = blockOf[k];
+      links.push({ fi, pb: b, cb, off: cb.cards.indexOf(k) * step + o.cardW / 2 });
+    })));
+
+    // --- générations : au plus tôt, puis les ancêtres sont rapprochés de leurs enfants
+    const cap = blocks.length + 5;
+    for (let n = 0, ch = true; ch && n < cap; n++) {
+      ch = false;
+      links.forEach((l) => { if (l.cb !== l.pb && l.cb.gen < l.pb.gen + 1) { l.cb.gen = l.pb.gen + 1; ch = true; } });
+    }
+    for (let n = 0, ch = true; ch && n < cap; n++) {
+      ch = false;
+      blocks.forEach((b) => {
+        let m = Infinity;
+        links.forEach((l) => { if (l.pb === b && l.cb !== b) m = Math.min(m, l.cb.gen - 1); });
+        if (m !== Infinity && m > b.gen) { b.gen = m; ch = true; }
+      });
+    }
+    const minGen = blocks.reduce((m, b) => Math.min(m, b.gen), Infinity);
+    blocks.forEach((b) => { b.gen -= minGen; });
+    const maxGen = blocks.reduce((m, b) => Math.max(m, b.gen), 0);
+
+    // --- ordre sur chaque ligne (parcours en profondeur, enfants d'une même famille côte à côte)
+    const lists = [];
+    for (let g = 0; g <= maxGen; g++) lists.push([]);
+    const visited = new Set();
+    const place = (b) => { visited.add(b); lists[b.gen].push(b); };
+    const parentFamOf = (id) => {
+      const f = idx.parentFam[id];
+      return f && famInfo[f.id] && famInfo[f.id].kids.indexOf(id) >= 0 ? famInfo[f.id] : null;
+    };
+    (function () {
+      const process = (b) => {
+        const kidBlocks = [];
+        b.kidFams.forEach((fi) => fi.kids.forEach((k) => {
+          const kb = blockOf[k];
+          if (!visited.has(kb)) { place(kb); kidBlocks.push(kb); }
+        }));
+        b.cards.forEach((id) => {
+          const pf = parentFamOf(id);
+          if (!pf) return;
+          const pb = blockOf[pf.partners[0]];
+          if (!visited.has(pb)) { place(pb); process(pb); }
+        });
+        kidBlocks.forEach(process);
+      };
+      const size = new Map();
+      blocks.forEach((b) => size.set(b, countDesc(idx, b.ids[0])));
+      blocks.slice().sort((a, c) => a.gen - c.gen || size.get(c) - size.get(a) || a.i - c.i).forEach((b) => {
+        if (!visited.has(b)) { place(b); process(b); }
+      });
+    })();
+
+    // --- positions horizontales
+    lists.forEach((row) => { let x = 0; row.forEach((b) => { b.x = x; x += b.w + o.hGap; }); });
+    const incoming = new Map(), outgoing = new Map();
+    links.forEach((l) => {
+      if (l.cb === l.pb) return;
+      (incoming.get(l.cb) || incoming.set(l.cb, []).get(l.cb)).push(l);
+      (outgoing.get(l.pb) || outgoing.set(l.pb, []).get(l.pb)).push(l);
+    });
+    for (let it = 0; it < o.iterations; it++) {
+      for (let g = 1; g <= maxGen; g++) {
+        const row = lists[g];
+        spread(row, row.map((b) => { const inc = incoming.get(b); return inc ? avg(inc.map((l) => l.pb.x + l.fi.ax - l.off)) : b.x; }), o.hGap);
+      }
+      for (let g = maxGen - 1; g >= 0; g--) {
+        const row = lists[g];
+        spread(row, row.map((b) => { const out = outgoing.get(b); return out ? avg(out.map((l) => l.cb.x + l.off - l.fi.ax)) : b.x; }), o.hGap);
+      }
+    }
+    const minX = blocks.reduce((m, b) => Math.min(m, b.x), Infinity);
+    blocks.forEach((b) => { b.x += o.margin - minX; });
+
+    // --- sortie
+    const rowY = (g) => o.margin + g * (o.cardH + o.vGap);
+    const out = { cards: [], links: [], edges: [], labels: [], gens: maxGen + 1 };
+    let maxX = 0;
+    blocks.forEach((b) => {
+      const y = rowY(b.gen);
+      b.cards.forEach((id, i) => out.cards.push({ id, x: b.x + i * step, y, w: o.cardW, h: o.cardH }));
+      maxX = Math.max(maxX, b.x + b.w);
+      for (let i = 0; i < b.cards.length - 1; i++) {
+        const fi = b.fams.find((x) => x.partners.length === 2 && x.partners.indexOf(b.cards[i]) >= 0 && x.partners.indexOf(b.cards[i + 1]) >= 0);
+        if (fi) out.links.push({ x1: b.x + i * step + o.cardW, x2: b.x + (i + 1) * step, y: y + o.cardH / 2, married: !!fi.f.married });
+      }
+      b.fams.forEach((fi) => {
+        if (!fi.ax && fi.ax !== 0) return;
+        const has2 = fi.kids.length > 0;
+        const ax = b.x + fi.ax;
+        const text = o.marriageText ? o.marriageText(fi.f) : "";
+        if (text) out.labels.push({ x: has2 ? ax + 7 : ax, y: y + o.cardH + 16, text, anchor: has2 ? "start" : "middle" });
+      });
+      // les familles sans enfants n'ont pas d'ancrage calculé : on affiche seulement leur libellé
+      b.fams.filter((fi) => !fi.kids.length && fi.partners.length === 2 && o.marriageText).forEach((fi) => {
+        const pos = fi.partners.map((id) => b.cards.indexOf(id));
+        if (Math.abs(pos[0] - pos[1]) !== 1) return;
+        const text = o.marriageText(fi.f);
+        if (text) out.labels.push({ x: b.x + Math.min(pos[0], pos[1]) * step + o.cardW + o.linkW / 2, y: y + o.cardH + 16, text, anchor: "middle" });
+      });
+      let rank = 0;
+      const nb = b.kidFams.length;
+      b.kidFams.forEach((fi) => {
+        const ax = b.x + fi.ax, ay = fi.mid ? y + o.cardH / 2 : y + o.cardH;
+        const busY = y + o.cardH + o.vGap * 0.5 + (nb > 1 ? rank * o.busStep : 0);
+        rank++;
+        const tops = fi.kids.map((k) => { const cb = blockOf[k]; return { cx: cb.x + cb.cards.indexOf(k) * step + o.cardW / 2, cy: rowY(cb.gen) }; }).filter((t) => t.cy > y);
+        if (!tops.length) return;
+        const minx = Math.min(ax, Math.min.apply(null, tops.map((t) => t.cx))), maxx = Math.max(ax, Math.max.apply(null, tops.map((t) => t.cx)));
+        let d = "M" + ax + " " + ay + "V" + busY + "M" + minx + " " + busY + "H" + maxx;
+        tops.forEach((t) => { d += "M" + t.cx + " " + busY + "V" + t.cy; });
+        out.edges.push(d);
       });
     });
-    const kidsW = cursor;
-
-    // --- la rangée est centrée au-dessus de ses enfants
-    const rowW = cards.length * o.cardW + (cards.length - 1) * o.linkW;
-    let rowX = 0, minX = 0, maxX = rowW;
-    if (kidsAll.length) {
-      const a = kidsAll[0].dx + kidsAll[0].unit.focusX;
-      const b = kidsAll[kidsAll.length - 1].dx + kidsAll[kidsAll.length - 1].unit.focusX;
-      rowX = (a + b) / 2 - rowW / 2;
-      minX = Math.min(0, rowX);
-      maxX = Math.max(kidsW, rowX + rowW);
-    }
-    const shift = -minX;
-    kidsAll.forEach((kd) => { kd.dx += shift; });
-    rowX += shift;
-
-    return {
-      pid, cards, focusIdx, infos, rowW, rowX,
-      width: maxX - minX,
-      focusX: rowX + focusIdx * (o.cardW + o.linkW) + o.cardW / 2,
-    };
-  }
-
-  function place(u, x, y, o, out) {
-    const step = o.cardW + o.linkW;
-    u.cards.forEach((id, i) => {
-      out.cards.push({ id, x: x + u.rowX + i * step, y, w: o.cardW, h: o.cardH, focus: i === u.focusIdx });
-    });
-    out.maxY = Math.max(out.maxY, y + o.cardH);
-
-    const midY = y + o.cardH / 2;
-    const childTop = y + o.cardH + o.vGap;
-    const nbWithKids = u.infos.filter((i) => i.kids.length).length;
-    let rank = 0;
-
-    u.infos.forEach((inf) => {
-      let ax, ay;
-      if (inf.link !== null) {
-        const left = x + u.rowX + inf.link * step + o.cardW;
-        ax = left + o.linkW / 2; ay = midY;
-        out.links.push({ x1: left, x2: left + o.linkW, y: midY, married: !!inf.fam.married });
-      } else {
-        ax = x + u.rowX + inf.anchorCard * step + o.cardW / 2; ay = y + o.cardH;
-      }
-
-      const hasKids = inf.kids.length > 0;
-      const year = inf.fam.marriage ? yearOf(inf.fam.marriage.date) : null;
-      if (year) {
-        out.labels.push({ x: hasKids ? ax + 7 : ax, y: y + o.cardH + 16, text: "m. " + year, anchor: hasKids ? "start" : "middle" });
-      }
-      if (inf.stub) {
-        const target = sortedKids({ people: out.people }, inf.fam)[0];
-        out.stubs.push({ x: ax, y: y + o.cardH + 24, fid: inf.fam.id, target });
-      }
-      if (hasKids) {
-        const busY = y + o.cardH + o.vGap * 0.5 + (nbWithKids > 1 ? rank * o.busStep : 0);
-        rank++;
-        const xs = inf.kids.map((k) => x + k.dx + k.unit.focusX);
-        const minx = Math.min(ax, Math.min.apply(null, xs)), maxx = Math.max(ax, Math.max.apply(null, xs));
-        let d = "M" + ax + " " + ay + "V" + busY + "M" + minx + " " + busY + "H" + maxx;
-        xs.forEach((cx) => { d += "M" + cx + " " + busY + "V" + childTop; });
-        out.edges.push(d);
-        inf.kids.forEach((k) => place(k.unit, x + k.dx, childTop, o, out));
-      }
-    });
-  }
-
-  function newCtx() {
-    return { expanded: new Set(), cardShown: new Set(), famShown: new Set() };
-  }
-
-  function arrange(idx, units, o) {
-    const out = { cards: [], links: [], edges: [], labels: [], stubs: [], maxY: 0, people: idx.people };
-    const maxW = units.reduce((m, u) => Math.max(m, u.width), 0);
-    let y = o.margin;
-    units.forEach((u, i) => {
-      if (i > 0) y = out.maxY + o.rootGap;
-      place(u, o.margin + (maxW - u.width) / 2, y, o, out);
-    });
-    out.width = maxW + 2 * o.margin;
-    out.height = out.maxY + o.margin;
-    delete out.people;
+    out.width = maxX + o.margin;
+    out.height = rowY(maxGen) + o.cardH + o.margin;
     return out;
   }
 
-  // ------------------------------------------------------------------ API
-  function layoutAll(idx, opts) {
-    const o = Object.assign({}, DEFAULTS, opts);
-    const ctx = newCtx();
-    const units = [];
-    const add = (pid) => units.push(layoutUnit(idx, pid, ctx, o, new Set()));
+  function avg(a) { return a.reduce((s, v) => s + v, 0) / a.length; }
 
-    // 1. les ancêtres les plus lointains (sans parents connus, avec descendance), du plus gros arbre au plus petit
-    const roots = idx.order
-      .filter((id) => !idx.parentFam[id] && hasKids(idx, id))
-      .map((id, i) => ({ id, i, n: countDesc(idx, id) }))
-      .sort((a, b) => b.n - a.n || a.i - b.i);
-    roots.forEach((r) => { if (!ctx.cardShown.has(r.id)) add(r.id); });
+  function layoutView(idx, view, opts) { return layoutGraph(idx, viewSet(idx, view), opts); }
 
-    // 2. tout ce qui n'a pas encore été affiché (personnes isolées, unions sans enfants…)
-    for (let guard = 0; guard < 1000; guard++) {
-      const fam = idx.families.find((f) => !ctx.famShown.has(f.id) && (idx.people[f.husb] || idx.people[f.wife]));
-      if (fam) { add(idx.people[fam.husb] ? fam.husb : fam.wife); continue; }
-      const orphan = idx.order.find((id) => !ctx.cardShown.has(id));
-      if (orphan) { add(orphan); continue; }
-      break;
-    }
-    return arrange(idx, units, o);
-  }
-
-  function layoutBranch(idx, pid, opts) {
-    const o = Object.assign({}, DEFAULTS, opts);
-    const ctx = newCtx();
-    return arrange(idx, [layoutUnit(idx, pid, ctx, o, new Set())], o);
-  }
-
-  return { DEFAULTS, yearOf, buildIndex, layoutAll, layoutBranch, hasKids, countDesc, sortedFams, sortedKids };
+  return { DEFAULTS, yearOf, buildIndex, layoutGraph, layoutView, viewSet, descendantsSet, ancestorsSet, hasKids, countDesc, sortedFams, sortedKids };
 });

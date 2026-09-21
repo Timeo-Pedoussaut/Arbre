@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script>try{var t=localStorage.getItem("arbre-genealogique:theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,16 +18,43 @@
     <p class="masthead-sub">Cliquez sur une personne pour ouvrir sa fiche complète</p>
   </div>
   <div class="search-wrap">
-    <input type="search" id="search" placeholder="Rechercher un nom…" autocomplete="off" aria-label="Rechercher une personne">
-    <div id="search-results" class="search-results"></div>
+    <div class="search-row">
+      <input type="search" id="search" placeholder="Nom, métier, lieu, année…" autocomplete="off" aria-label="Rechercher une personne" aria-controls="search-drop">
+      <button type="button" id="btn-filters" class="btn" aria-expanded="false" aria-controls="filters">Filtres</button>
+    </div>
+    <div id="search-drop" class="search-drop">
+      <div id="filters" class="filters" hidden>
+        <div class="grid">
+          <label>Prénom ou nom (naissance, mariage) <input id="f-name" type="text" autocomplete="off"></label>
+          <label>Métier <input id="f-job" type="text" autocomplete="off"></label>
+          <label class="span2">Lieu (naissance, décès, mariage) <input id="f-place" type="text" autocomplete="off"></label>
+          <div class="range-field"><span>Année de naissance</span>
+            <span class="range"><input id="f-bfrom" type="number" inputmode="numeric" placeholder="de" aria-label="Naissance à partir de"> <input id="f-bto" type="number" inputmode="numeric" placeholder="à" aria-label="Naissance jusqu'à"></span></div>
+          <div class="range-field"><span>Année de décès</span>
+            <span class="range"><input id="f-dfrom" type="number" inputmode="numeric" placeholder="de" aria-label="Décès à partir de"> <input id="f-dto" type="number" inputmode="numeric" placeholder="à" aria-label="Décès jusqu'à"></span></div>
+          <label>Statut
+            <select id="f-status"><option value="">Tous</option><option value="alive">Vivant(e)s</option><option value="dead">Décédé(e)s</option></select></label>
+          <label>Sexe
+            <select id="f-sex"><option value="">Tous</option><option value="H">Hommes</option><option value="F">Femmes</option></select></label>
+        </div>
+        <div class="filters-actions"><button type="button" id="f-reset" class="btn">Réinitialiser</button></div>
+      </div>
+      <div id="search-results" class="search-results"></div>
+    </div>
   </div>
 </header>
 
 <div class="toolbar" role="toolbar" aria-label="Affichage de l'arbre">
-  <label class="tb-view">
-    <span>Vue</span>
-    <select id="view-select"></select>
-  </label>
+  <div class="tb-view">
+    <label><span class="sr">Type de vue</span>
+      <select id="view-mode">
+        <option value="all">Tout l'arbre</option>
+        <option value="desc">Descendance de…</option>
+        <option value="anc">Ascendance de…</option>
+        <option value="hour">Ascendance et descendance de…</option>
+      </select></label>
+    <label id="view-person-wrap" hidden><span class="sr">Personne</span><select id="view-person"></select></label>
+  </div>
 
   <div class="tb-zoom" role="group" aria-label="Zoom">
     <button type="button" id="zoom-out" class="icon-btn" aria-label="Réduire">−</button>
@@ -35,10 +63,21 @@
     <button type="button" id="zoom-fit" class="btn">Tout voir</button>
   </div>
 
+  <div class="tb-toggles" role="group" aria-label="Affichage">
+    <button type="button" id="btn-density" class="btn" aria-pressed="false" title="Cartes détaillées ou compactes">Cartes compactes</button>
+    <button type="button" id="btn-minimap" class="btn" aria-pressed="true" title="Afficher ou masquer la mini-carte">Mini-carte</button>
+    <button type="button" id="btn-theme" class="icon-btn" aria-label="Passer en mode sombre" title="Mode sombre / clair"></button>
+  </div>
+
   <div class="tb-actions">
     <button type="button" id="btn-add" class="btn btn-primary">Ajouter une personne</button>
     <button type="button" id="btn-print" class="btn">Exporter en PDF</button>
   </div>
+</div>
+
+<div id="search-chip" class="banner banner-info" hidden>
+  <p id="search-chip-text"></p>
+  <div class="banner-actions"><button type="button" id="search-clear" class="btn">Effacer la recherche</button></div>
 </div>
 
 <div id="draft-banner" class="banner" hidden>
@@ -54,14 +93,20 @@
   <span id="print-sub"></span>
 </div>
 
-<main id="viewport" class="viewport" tabindex="-1" aria-label="Arbre généalogique">
-  <div id="stage" class="stage">
-    <div id="canvas" class="canvas">
-      <svg id="lines" class="lines" aria-hidden="true"></svg>
-      <div id="cards"></div>
+<div class="viewport-wrap">
+  <main id="viewport" class="viewport" tabindex="-1" aria-label="Arbre généalogique">
+    <div id="stage" class="stage">
+      <div id="canvas" class="canvas">
+        <svg id="lines" class="lines" aria-hidden="true"></svg>
+        <div id="cards"></div>
+      </div>
     </div>
+  </main>
+  <div id="minimap" class="minimap" aria-label="Mini-carte de l'arbre" hidden>
+    <canvas id="mm-canvas"></canvas>
+    <div id="mm-view" class="mm-view"></div>
   </div>
-</main>
+</div>
 
 <aside id="panel" class="panel" aria-hidden="true" aria-label="Fiche de la personne">
   <button id="panel-close" class="panel-close" aria-label="Fermer la fiche">×</button>
@@ -90,7 +135,7 @@
         <label class="span2">Personne <select id="pf-rel-target"></select></label>
         <label id="pf-fam-wrap" class="span2">Union concernée <select id="pf-rel-fam"></select></label>
         <div id="pf-marr-wrap" class="span2 grid">
-          <label>Date du mariage <input id="pf-marr-date" type="text" placeholder="ex. 12 mai 1925 ou 1925"></label>
+          <div class="field"><span class="lbl">Date du mariage</span><div id="pf-marr-date" class="datefield"></div></div>
           <label>Lieu du mariage <input id="pf-marr-place" type="text"></label>
           <label class="check span2"><input id="pf-married" type="checkbox" checked> Ils sont mariés (sinon : union libre / partenaires)</label>
         </div>
@@ -116,10 +161,10 @@
     <fieldset>
       <legend>Naissance et décès</legend>
       <div class="grid">
-        <label>Date de naissance <input id="pf-birth" type="text" placeholder="ex. 12 mars 1900 ou 1900"></label>
+        <div class="field"><span class="lbl">Date de naissance</span><div id="pf-birth" class="datefield"></div></div>
         <label>Lieu de naissance <input id="pf-birthplace" type="text"></label>
         <label class="check span2"><input id="pf-dead" type="checkbox"> Cette personne est décédée</label>
-        <label class="dead-only">Date de décès <input id="pf-death" type="text" placeholder="laisser vide si inconnue"></label>
+        <div class="field dead-only"><span class="lbl">Date de décès</span><div id="pf-death" class="datefield"></div></div>
         <label class="dead-only">Lieu de décès <input id="pf-deathplace" type="text"></label>
         <label class="dead-only span2">Cause du décès <input id="pf-deathcause" type="text"></label>
       </div>
