@@ -8,7 +8,7 @@
   PEOPLE    : une entrée par personne (identifiant unique = la clé).
      given, surname, marriedName, sex ("H"/"F"/""), birth, birthPlace, dead (true si décédé(e)),
      death, deathPlace, deathCause, job, anecdote, note, photo, photos (liste de chemins)
-  FAMILIES  : une entrée par couple (ou par parent seul) avec ses enfants.
+  FAMILIES  : une entrée par couple (or par parent seul) avec ses enfants.
      id, husb, wife, children [ids], married (true si mariés), marriage {date, place}
 */
 
@@ -21,7 +21,7 @@ const PEOPLE = {
   "georgette_bacquet": {"given": "Georgette", "surname": "Bacquet", "marriedName": "Pedoussaut", "sex": "F", "birth": "24 août 1940"},
   "louis_bacquet": {"given": "Louis", "surname": "Bacquet", "sex": "H", "birth": "30 juin 1900", "dead": true, "death": "1992"},
   "jeanne_marie_charlotte_clavaud_de_lucon": {"given": "Jeanne Marie Charlotte", "surname": "Clavaud de Luçon", "sex": "F", "birth": "31 mars 1905", "dead": true, "death": "13 octobre 1993", "deathPlace": "Canteleu"},
-  "marie_charlotte_levasseur": {"given": "Marie Charlotte", "surname": "Levasseur", "marriedName": "Clavaud de Luçon", "sex": "F", "birth": "21 avril 1884", "birthPlace": "Bois-Guillaume", "dead": true, "death": "1970", "photo": "photos/marie_charlotte_levasseur-1.jpg", "photos": ["photos/marie_charlotte_levasseur-1.jpg", "photos/marie_charlotte_levasseur-2.jpg"]},
+  "marie_charlotte_levasseur": {"given": "Marie Charlotte", "surname": "Levasseur", "marriedName": "Clavaud de Luçon", "sex": "F", "birth": "21 avril 1884", "birthPlace": "Bois-Guillaume", "dead": true, "death": "1970", "note": "Décès vers 1970 (non répertorié au fichier informatisé INSEE débutant le 01/01/1970)", "photo": "photos/marie_charlotte_levasseur-1.jpg", "photos": ["photos/marie_charlotte_levasseur-1.jpg", "photos/marie_charlotte_levasseur-2.jpg"]},
   "andre_clavaud_de_lucon": {"given": "André", "surname": "Clavaud de Luçon", "sex": "H", "birth": "vers 15 mars 1840", "birthPlace": "Talnoe, Russie", "dead": true, "death": "1913", "deathPlace": "Elbeuf", "deathCause": "Maladie", "job": "Soldat à la 1re compagnie de pionniers de discipline", "anecdote": "En 1848 il a eu un acte de notoriété qu'il a dû faire quand il est rentré en France à 18ans", "photo": "photos/andre_clavaud_de_lucon-1.jpg", "photos": ["photos/andre_clavaud_de_lucon-1.jpg", "photos/andre_clavaud_de_lucon-2.jpg"]},
   "zelie_dacher": {"given": "Zelie", "surname": "Dacher", "sex": "F", "dead": true, "deathPlace": "1970"},
   "inconnu_500011": {"given": "", "surname": "", "sex": "H"},
@@ -54,7 +54,7 @@ const PEOPLE = {
   "serge_george_andre_clavaud_de_lucon": {"given": "Serge George André", "surname": "Clavaud de Luçon", "sex": "H", "birth": "1926", "dead": true, "death": "1994", "deathPlace": "Toulouse"},
   "inconnu_500039": {"given": "", "surname": "", "sex": "F"},
   "marie_julie_josephine_lethiec": {"given": "Marie Julie Joséphine", "surname": "Léthiec", "marriedName": "Clavaud de Luçon", "sex": "F", "dead": true},
-  "hugues_jean_jacques_lucien_clavaud": {"given": "Hugues Jean-Jacques Lucien", "surname": "Clavaud", "sex": "H", "birth": "1932", "birthPlace": "Paris", "dead": true, "death": "1999", "deathPlace": "Paris"},
+  "hugues_jean_jacques_lucien_clavaud": {"given": "Hugues Jean-Jacques Lucien", "surname": "Clavaud", "sex": "H", "birth": "18 juin 1932", "birthPlace": "Paris (18e)", "dead": true, "death": "19 mars 1989", "deathPlace": "Paris (7e)", "note": "Acte de décès n° 261 (Paris 7e)"},
   "marie_josephine_lea_clavaud": {"given": "Marie Joséphine Léa", "surname": "Clavaud", "sex": "F", "birth": "1872", "job": "Institutrice"},
   "andre_auguste_gaston_deleurme": {"given": "André Auguste Gaston", "surname": "Deleurme", "sex": "H", "dead": true},
   "camille_jules_deleurme": {"given": "Camille Jules", "surname": "Deleurme", "sex": "H", "birth": "28 mars 1866", "birthPlace": "Brest", "dead": true, "job": "Ancien Soldat", "anecdote": "Libéré au deuxième régiment étranger domicilié à Oissel et de droit à Sidi Bel Ables en Algérie"},
